@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>My Digital Cat</title>
+<style>
+    body {
+        font-family: 'Comic Sans MS', 'Chalkduster', 'cursive';
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        margin: 0;
+        background-color: #f0f8ff; /* Light sky blue */
+        overflow: hidden;
+    }
+    #catArea {
+        width: 600px;
+        height: 400px;
+        border: 3px dashed #87ceeb; /* Sky blue dashed border */
+        position: relative;
+        background-color: #f5f5dc; /* Beige for a room floor */
+        box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        background-image:
+            radial-gradient(circle at 10px 10px, #e0e0e0 1px, transparent 1px),
+            radial-gradient(circle at 50px 50px, #d0d0d0 1px, transparent 1px);
+        background-size: 60px 60px;
+    }
+    #digitalCat {
+        width: 50px;
+        height: 35px;
+        background-color: #ffa07a; /* Light Salmon - cat color */
+        border-radius: 50% 50% 30% 30% / 60% 60% 40% 40%; /* Cat-like shape */
+        position: absolute;
+        bottom: 10px;
+        left: calc(50% - 25px);
+        transition: transform 0.2s ease-out, left 0.5s linear, bottom 0.5s linear, background-color 0.3s;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 18px; /* For eyes/face */
+        cursor: grab;
+        box-shadow: 2px 2px 5px rgba(0,0,0,0.2);
+    }
+    #digitalCat::before, #digitalCat::after { /* Ears */
+        content: '';
+        position: absolute;
+        top: -8px;
+        width: 0;
+        height: 0;
+        border-left: 8px solid transparent;
+        border-right: 8px solid transparent;
+        border-bottom: 12px solid #ff8c69; /* Slightly darker ear */
+    }
+    #digitalCat::before { left: 5px; transform: rotate(-15deg); }
+    #digitalCat::after { right: 5px; transform: rotate(15deg); }
+
+    .cat-face {
+        /* Using text for simplicity, could be SVG or more divs */
+        user-select: none;
+    }
+    .sleeping #digitalCat {
+        background-color: #ffb699; /* Lighter when sleeping */
+        transform: rotate(5deg) scale(0.95);
+    }
+    .playing #digitalCat {
+        animation: bounce 0.5s infinite alternate;
+    }
+    @keyframes bounce {
+        to { transform: translateY(-10px) scale(1.05); }
+    }
+
+    #controls, #status {
+        margin-top: 15px;
+        background: white;
+        padding: 10px 15px;
+        border-radius: 8px;
+        box-shadow: 0 1px 5px rgba(0,0,0,0.1);
+        text-align: center;
+    }
+    #controls button {
+        padding: 8px 12px;
+        margin: 5px;
+        border: none;
+        border-radius: 5px;
+        background-color: #87cefa; /* Light sky blue button */
+        color: #2c3e50;
+        cursor: pointer;
+        font-weight: bold;
+        transition: background-color 0.2s;
+    }
+    #controls button:hover {
+        background-color: #76c1e3;
+    }
+    #status span {
+        display: inline-block;
+        margin: 0 8px;
+        padding: 3px 6px;
+        background-color: #eee;
+        border-radius: 3px;
+    }
+    .thought-bubble {
+        position: absolute;
+        bottom: 100%; /* Above the cat */
+        left: 50%;
+        transform: translateX(-50%);
+        background-color: white;
+        padding: 5px 10px;
+        border-radius: 10px;
+        border: 1px solid #ccc;
+        font-size: 12px;
+        white-space: nowrap;
+        opacity: 0;
+        transition: opacity 0.3s;
+        pointer-events: none; /* Don't block cat clicks */
+        z-index: 10;
+    }
+    .thought-bubble.visible { opacity: 1; }
+    .food-bowl, .water-bowl, .cat-bed {
+        position: absolute;
+        width: 40px;
+        height: 20px;
+        border-radius: 0 0 10px 10px;
+    }
+    .food-bowl { background-color: #d2b48c; bottom: 5px; left: 20px; } /* Tan */
+    .water-bowl { background-color: #add8e6; bottom: 5px; right: 20px; } /* Light blue */
+    .cat-bed {
+        width: 80px; height: 50px; background-color: #deb887; /* Burlywood */
+        border-radius: 10px; bottom: 10px; left: calc(50% - 100px);
+        display: flex; align-items: center; justify-content: center; font-size:10px; color: #543d25;
+    }
+</style>
+</head>
+<body>
+
+<div id="catArea">
+    <div id="digitalCat">
+        <span class="cat-face">^-^</span>
+        <div class="thought-bubble" id="thoughtBubble"></div>
+    </div>
+    <div class="food-bowl" title="Food Bowl"></div>
+    <div class="water-bowl" title="Water Bowl"></div>
+    <div class="cat-bed" title="Comfy Bed">Zzz...</div>
+</div>
+
+<div id="status">
+    Mood: <span id="moodStatus">Content</span> |
+    Hunger: <span id="hungerStatus">0</span> |
+    Thirst: <span id="thirstStatus">0</span> |
+    Energy: <span id="energyStatus">100</span> |
+    Boredom: <span id="boredomStatus">0</span>
+</div>
+
+<div id="controls">
+    <button id="feedBtn">Feed Kibble</button>
+    <button id="waterBtn">Give Water</button>
+    <button id="playBtn">Play with Laser (Move Mouse)</button>
+    <button id="petBtn">Pet Cat</button>
+</div>
+
+<script>
+    const cat = document.getElementById('digitalCat');
+    const catArea = document.getElementById('catArea');
+    const catFace = cat.querySelector('.cat-face');
+    const thoughtBubble = document.getElementById('thoughtBubble');
+
+    const moodStatusEl = document.getElementById('moodStatus');
+    const hungerStatusEl = document.getElementById('hungerStatus');
+    const thirstStatusEl = document.getElementById('thirstStatus');
+    const energyStatusEl = document.getElementById('energyStatus');
+    const boredomStatusEl = document.getElementById('boredomStatus');
+
+    const foodBowlPos = { x: 40, y: catArea.offsetHeight - 15 }; // center of bowl
+    const waterBowlPos = { x: catArea.offsetWidth - 40, y: catArea.offsetHeight - 15 };
+    const bedPos = { x: catArea.offsetWidth / 2 - 100 + 40, y: catArea.offsetHeight - 35 };
+
+
+    let catState = {
+        x: catArea.offsetWidth / 2,
+        y: catArea.offsetHeight - (cat.offsetHeight / 2) - 10,
+        targetX: catArea.offsetWidth / 2,
+        targetY: catArea.offsetHeight - (cat.offsetHeight / 2) - 10,
+        speed: 1.5,
+        
+        hunger: 20,       // 0-100 (100 = very hungry)
+        thirst: 15,       // 0-100 (100 = very thirsty)
+        energy: 90,       // 0-100 (0 = exhausted)
+        boredom: 10,      // 0-100 (100 = very bored)
+        affection: 70,    // 0-100 (0 = needs pets)
+
+        isSleeping: false,
+        isPlaying: false,
+        isMovingToTarget: false,
+        currentAction: "idle", // "idle", "eating", "drinking", "sleeping", "playing_chase", "seeking_attention"
+        actionTimeout: null,
+        lastPetTime: Date.now(),
+    };
+
+    const MAX_NEED = 100;
+    const NEED_THRESHOLD_HIGH = 70;
+    const NEED_THRESHOLD_LOW = 30;
+    const ENERGY_THRESHOLD_SLEEP = 20;
+    const BOREDOM_THRESHOLD_PLAY = 60;
+    const AFFECTION_THRESHOLD_SEEK = 30;
+
+    function updateCatPosition() {
+        const dx = catState.targetX - catState.x;
+        const dy = catState.targetY - catState.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+
+        if (distance < catState.speed) {
+            catState.x = catState.targetX;
+            catState.y = catState.targetY;
+            catState.isMovingToTarget = false;
+            if (catState.currentAction === "moving_to_food") setCurrentAction("eating", 1500);
+            else if (catState.currentAction === "moving_to_water") setCurrentAction("drinking", 1500);
+            else if (catState.currentAction === "moving_to_bed") setCurrentAction("sleeping");
+
+        } else {
+            catState.x += (dx / distance) * catState.speed;
+            catState.y += (dy / distance) * catState.speed;
+            catState.isMovingToTarget = true;
+        }
+
+        cat.style.left = `${catState.x - cat.offsetWidth / 2}px`;
+        cat.style.bottom = `${catArea.offsetHeight - catState.y - cat.offsetHeight / 2}px`;
+    }
+
+    function showThought(text, duration = 2000) {
+        thoughtBubble.textContent = text;
+        thoughtBubble.classList.add('visible');
+        setTimeout(() => thoughtBubble.classList.remove('visible'), duration);
+        playMeow(0.05, 800 + Math.random()*200); // Subtle thought meow
+    }
+
+    function updateStatusDisplay() {
+        hungerStatusEl.textContent = Math.round(catState.hunger);
+        thirstStatusEl.textContent = Math.round(catState.thirst);
+        energyStatusEl.textContent = Math.round(catState.energy);
+        boredomStatusEl.textContent = Math.round(catState.boredom);
+        
+        let mood = "Content";
+        if(catState.isSleeping) mood = "Sleeping...";
+        else if(catState.currentAction === "playing_chase") mood = "Playful!";
+        else if(catState.hunger > NEED_THRESHOLD_HIGH) mood = "Hungry!";
+        else if(catState.thirst > NEED_THRESHOLD_HIGH) mood = "Thirsty!";
+        else if(catState.energy < ENERGY_THRESHOLD_SLEEP && !catState.isSleeping) mood = "Tired...";
+        else if(catState.boredom > BOREDOM_THRESHOLD_PLAY) mood = "Bored!";
+        else if(catState.affection < AFFECTION_THRESHOLD_SEEK) mood = "Wants pets...";
+        moodStatusEl.textContent = mood;
+
+        catFace.textContent = catState.isSleeping ? "(-.-)Zzz" : (catState.isPlaying ? "(^o^)" : (catState.hunger > 70 || catState.thirst > 70 ? "(Ծ_Ծ)" : "^-^"));
+        catArea.classList.toggle('sleeping', catState.isSleeping);
+        catArea.classList.toggle('playing', catState.isPlaying && !catState.isSleeping);
+    }
+
+    function increaseNeeds() {
+        if (!catState.isSleeping) {
+            catState.hunger = Math.min(MAX_NEED, catState.hunger + 0.05); // Slower increase
+            catState.thirst = Math.min(MAX_NEED, catState.thirst + 0.07);
+            catState.energy = Math.max(0, catState.energy - (catState.isPlaying ? 0.2 : 0.04));
+            catState.boredom = Math.min(MAX_NEED, catState.boredom + (catState.isPlaying ? -0.5 : 0.06));
+            if(Date.now() - catState.lastPetTime > 20000) { // Needs affection if not petted for a while
+                 catState.affection = Math.max(0, catState.affection - 0.1);
+            }
+        } else {
+            catState.energy = Math.min(MAX_NEED, catState.energy + 0.3); // Regenerate energy faster
+            catState.hunger = Math.min(MAX_NEED, catState.hunger + 0.01); // Still get a bit hungry
+            catState.thirst = Math.min(MAX_NEED, catState.thirst + 0.01);
+            if (catState.energy >= MAX_NEED -10) {
+                setCurrentAction("idle"); // Wake up
+            }
+        }
+        catState.boredom = Math.max(0, catState.boredom); // cant go below 0
+    }
+
+    function decideAction() {
+        if (catState.currentAction !== "idle" && catState.currentAction !== "wandering" && catState.currentAction !== "seeking_attention" && !catState.isMovingToTarget) return; // Busy with something important
+
+        if (catState.isSleeping) {
+            if (catState.energy >= MAX_NEED - 10) setCurrentAction("idle"); // Wake up
+            return;
+        }
+
+        if (catState.energy < ENERGY_THRESHOLD_SLEEP && catState.currentAction !== "sleeping") {
+            showThought("So sleepy...");
+            setTarget(bedPos.x, bedPos.y);
+            setCurrentAction("moving_to_bed");
+            return;
+        }
+        if (catState.hunger > NEED_THRESHOLD_HIGH && catState.currentAction !== "eating" && catState.currentAction !== "moving_to_food") {
+            showThought("Hungry! Need food!");
+            setTarget(foodBowlPos.x, foodBowlPos.y);
+            setCurrentAction("moving_to_food");
+            return;
+        }
+        if (catState.thirst > NEED_THRESHOLD_HIGH && catState.currentAction !== "drinking" && catState.currentAction !== "moving_to_water") {
+            showThought("So thirsty...");
+            setTarget(waterBowlPos.x, waterBowlPos.y);
+            setCurrentAction("moving_to_water");
+            return;
+        }
+         if (catState.boredom > BOREDOM_THRESHOLD_PLAY && !catState.isPlaying && catState.currentAction !== "playing_chase") {
+            showThought("Let's play!");
+            setCurrentAction("idle"); // available for play
+            wander();
+            playMeow(0.1, 1200, 'sine'); // Playful meow
+            return;
+        }
+        if (catState.affection < AFFECTION_THRESHOLD_SEEK && catState.currentAction !== "seeking_attention") {
+             if (Math.random() < 0.5) { // 50% chance to actively seek attention
+                showThought("Pet me?");
+                setCurrentAction("seeking_attention");
+                // Maybe move towards center or make a specific sound
+                setTarget(catArea.offsetWidth/2 + (Math.random()-0.5)*100, catArea.offsetHeight/2 + (Math.random()-0.5)*50);
+                playMeow(0.2, 900, 'triangle');
+            }
+        }
+
+
+        // Default: Wander
+        if (catState.currentAction === "idle" && !catState.isMovingToTarget && Math.random() < 0.02) {
+            wander();
+        }
+    }
+    
+    function setCurrentAction(action, duration = 0) {
+        catState.currentAction = action;
+        catState.isSleeping = (action === "sleeping");
+        catState.isPlaying = (action === "playing_chase");
+
+        if(catState.actionTimeout) clearTimeout(catState.actionTimeout);
+
+        switch(action) {
+            case "eating":
+                catState.hunger = Math.max(0, catState.hunger - 60);
+                catState.energy = Math.min(MAX_NEED, catState.energy + 5);
+                playMeow(0.1, 700, 'square', 0.1); // Eating sound
+                break;
+            case "drinking":
+                catState.thirst = Math.max(0, catState.thirst - 50);
+                playMeow(0.05, 1500, 'sine', 0.15); // Drinking sound
+                break;
+            case "sleeping":
+                // energy regen handled in increaseNeeds
+                break;
+            case "idle":
+                // No specific changes, just finished an action
+                break;
+        }
+        updateStatusDisplay(); // Update mood immediately
+
+        if (duration > 0) {
+            catState.actionTimeout = setTimeout(() => {
+                if (catState.currentAction === action) { // Check if action hasn't changed
+                    setCurrentAction("idle");
+                }
+            }, duration);
+        }
+    }
+
+
+    function wander() {
+        const newTargetX = catState.x + (Math.random() - 0.5) * 200;
+        const newTargetY = catState.y + (Math.random() - 0.5) * 100;
+        setTarget(newTargetX, newTargetY);
+        setCurrentAction("wandering");
+    }
+
+    function setTarget(x, y) {
+        catState.targetX = Math.max(cat.offsetWidth / 2, Math.min(x, catArea.offsetWidth - cat.offsetWidth / 2));
+        catState.targetY = Math.max(cat.offsetHeight / 2, Math.min(y, catArea.offsetHeight - cat.offsetHeight / 2));
+    }
+
+    // --- User Interactions ---
+    document.getElementById('feedBtn').addEventListener('click', () => {
+        if (catState.isSleeping) { showThought("Zzz... (Too sleepy to eat)"); return; }
+        showThought("Om nom nom!");
+        setTarget(foodBowlPos.x, foodBowlPos.y);
+        setCurrentAction("moving_to_food");
+    });
+
+    document.getElementById('waterBtn').addEventListener('click', () => {
+        if (catState.isSleeping) { showThought("Zzz... (Not thirsty now)"); return; }
+        showThought("Slurp slurp!");
+        setTarget(waterBowlPos.x, waterBowlPos.y);
+        setCurrentAction("moving_to_water");
+    });
+
+    let isPlayingWithLaser = false;
+    document.getElementById('playBtn').addEventListener('click', () => {
+        if (catState.isSleeping) { showThought("Zzz... (Wants to sleep)"); return; }
+        isPlayingWithLaser = !isPlayingWithLaser;
+        if (isPlayingWithLaser) {
+            showThought("Laser time! WHEE!");
+            document.getElementById('playBtn').textContent = "Stop Playing";
+            catArea.style.cursor = 'crosshair';
+            setCurrentAction("playing_chase");
+        } else {
+            showThought("Okay, fun time over.");
+            document.getElementById('playBtn').textContent = "Play with Laser (Move Mouse)";
+            catArea.style.cursor = 'default';
+            if (catState.currentAction === "playing_chase") setCurrentAction("idle");
+             catState.boredom = Math.max(0, catState.boredom - 30); // Reduce boredom after play
+        }
+    });
+
+    catArea.addEventListener('mousemove', (e) => {
+        if (isPlayingWithLaser && !catState.isSleeping) {
+            const rect = catArea.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            setTarget(mouseX, mouseY);
+            if (catState.currentAction !== "playing_chase") setCurrentAction("playing_chase");
+        }
+    });
+    
+    document.getElementById('petBtn').addEventListener('click', () => {
+        if (catState.isSleeping && catState.energy < MAX_NEED - 20) { // Don't wake easily if very tired
+            showThought("Zzzz... mrrrp?");
+            return;
+        }
+        setCurrentAction("idle"); // Wake up if sleeping lightly, or interrupt current
+        showThought(catState.affection > 50 ? "Purrrr <3" : "Thanks for the pets!");
+        catState.affection = Math.min(MAX_NEED, catState.affection + 30);
+        catState.boredom = Math.max(0, catState.boredom - 10);
+        catState.lastPetTime = Date.now();
+        playPurr();
+
+        // Make cat "nuzzle" the click
+        const currentX = catState.x;
+        const currentY = catState.y;
+        // A little wiggle animation
+        cat.style.transform = 'rotate(-5deg) scale(1.02)';
+        setTimeout(()=> cat.style.transform = 'rotate(5deg) scale(1.02)', 100);
+        setTimeout(()=> cat.style.transform = 'rotate(0deg) scale(1)', 200);
+
+    });
+
+    // --- Sound ---
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    let soundsEnabled = false;
+    function enableSounds(){ // Call on first user interaction
+        if(audioCtx && audioCtx.state === 'suspended'){
+            audioCtx.resume().then(() => {
+                soundsEnabled = true;
+                console.log("AudioContext Resumed");
+            });
+        } else if (audioCtx) {
+            soundsEnabled = true;
+        }
+        document.body.removeEventListener('click', enableSounds, true); // only run once
+    }
+    document.body.addEventListener('click', enableSounds, true);
+
+
+    function playMeow(volume = 0.2, freq = 1000, type = 'sine', duration = 0.3) {
+        if (!soundsEnabled || !audioCtx) return;
+        const oscillator = audioCtx.createOscillator();
+        const gainNode = audioCtx.createGain();
+        oscillator.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+
+        oscillator.type = type;
+        oscillator.frequency.setValueAtTime(freq, audioCtx.currentTime);
+        oscillator.frequency.exponentialRampToValueAtTime(freq * (type === 'sine' ? 0.8 : 1.2), audioCtx.currentTime + duration * 0.3);
+        oscillator.frequency.exponentialRampToValueAtTime(freq, audioCtx.currentTime + duration);
+        
+        gainNode.gain.setValueAtTime(volume, audioCtx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+
+        oscillator.start(audioCtx.currentTime);
+        oscillator.stop(audioCtx.currentTime + duration);
+    }
+
+    let purrInterval = null;
+    function playPurr() {
+        if (!soundsEnabled || !audioCtx) return;
+        if (purrInterval) clearInterval(purrInterval); // Stop previous purr
+
+        const gainNode = audioCtx.createGain();
+        gainNode.gain.setValueAtTime(0.05, audioCtx.currentTime); // Low volume purr
+        gainNode.connect(audioCtx.destination);
+
+        let osc;
+        purrInterval = setInterval(() => {
+            osc = audioCtx.createOscillator();
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(30 + Math.random() * 10, audioCtx.currentTime); // Low rumbling frequency
+            osc.connect(gainNode);
+            osc.start(audioCtx.currentTime);
+            osc.stop(audioCtx.currentTime + 0.1); // Short bursts
+        }, 80); // Rhythmic purr
+
+        setTimeout(() => { // Stop purring after a bit
+            clearInterval(purrInterval);
+            purrInterval = null;
+            gainNode.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.5);
+             setTimeout(()=>gainNode.disconnect(), 500);
+        }, 2000 + Math.random()*1000);
+    }
+
+
+    // --- Main Loop ---
+    function gameLoop() {
+        increaseNeeds();
+        if (!catState.isPlaying && !catState.isMovingToTarget && catState.currentAction !== "eating" && catState.currentAction !== "drinking") {
+           // Only decide new actions if not actively engaged or forced into one (like eating)
+            decideAction();
+        }
+        updateCatPosition();
+        updateStatusDisplay();
+        requestAnimationFrame(gameLoop);
+    }
+
+    // Initial setup
+    setTarget(catState.x, catState.y); // Set initial target to current position
+    gameLoop();
+    showThought("Meow! I'm alive!");
+</script>
+
+</body>
+</html>

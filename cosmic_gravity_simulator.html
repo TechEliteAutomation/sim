@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cosmic Gravity Simulator</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #000010; /* Deep space blue/black */
+            color: #e0e0e0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+        }
+        #simulationContainer {
+            position: relative;
+            border: 1px solid #303050;
+            box-shadow: 0 0 20px rgba(100, 100, 255, 0.3);
+        }
+        canvas {
+            display: block;
+            background: radial-gradient(ellipse at center, #000010 0%, #000000 70%);
+        }
+        #controls {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(10, 10, 30, 0.85);
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            color: #c0c0ff;
+        }
+        #controls h3 {
+            margin: 0 0 10px 0;
+            text-align: center;
+            font-size: 1.1em;
+            border-bottom: 1px solid #303050;
+            padding-bottom: 5px;
+        }
+        #controls label {
+            display: block;
+            margin-bottom: 3px;
+            font-size: 0.9em;
+        }
+        #controls input[type="range"],
+        #controls input[type="number"] {
+            width: 150px;
+            margin-bottom: 8px;
+        }
+        #controls input[type="number"] {
+            background-color: #101028;
+            color: #e0e0e0;
+            border: 1px solid #303050;
+            padding: 4px;
+            border-radius: 3px;
+        }
+        #controls button {
+            background-color: #282850;
+            color: #c0c0ff;
+            border: 1px solid #404070;
+            padding: 8px 10px;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.2s, transform 0.1s;
+        }
+        #controls button:hover {
+            background-color: #383868;
+        }
+        #controls button:active {
+            transform: scale(0.95);
+        }
+        .control-group {
+            margin-bottom: 10px;
+            padding-bottom: 10px;
+            border-bottom: 1px dashed #202040;
+        }
+        .control-group:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+            padding-bottom: 0;
+        }
+        #status {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            font-size: 0.85em;
+            background: rgba(10, 10, 30, 0.7);
+            padding: 5px 10px;
+            border-radius: 4px;
+        }
+        #initialVelocityLine {
+            position: absolute;
+            border: 1px dashed rgba(255, 255, 100, 0.7);
+            pointer-events: none; /* So it doesn't interfere with mouse events on canvas */
+        }
+    </style>
+</head>
+<body>
+    <div id="simulationContainer">
+        <canvas id="gravityCanvas"></canvas>
+        <div id="controls">
+            <h3>Cosmic Controls</h3>
+            <div class="control-group">
+                <label for="newBodyMass">New Body Mass: <span id="massValue">1000</span></label>
+                <input type="range" id="newBodyMass" min="10" max="10000" value="1000" step="10">
+                <button id="addBodyModeBtn">Mode: Add Body (Click & Drag)</button>
+                <small>Click canvas to place, drag for initial velocity.</small>
+            </div>
+            <div class="control-group">
+                <label for="gravitationalConstant">Gravity (G): <span id="gValue">1</span></label>
+                <input type="range" id="gravitationalConstant" min="0.1" max="10" value="1" step="0.1">
+                <label for="timeStep">Time Speed: <span id="timeStepValue">1</span></label>
+                <input type="range" id="timeStep" min="0.1" max="3" value="1" step="0.1">
+            </div>
+            <div class="control-group">
+                <button id="toggleTrailsBtn">Toggle Trails (On)</button>
+                <button id="resetBtn">Reset Simulation</button>
+                <button id="pausePlayBtn">Pause</button>
+            </div>
+        </div>
+        <div id="status">Bodies: 0</div>
+        <div id="initialVelocityLine" style="display: none;"></div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gravityCanvas');
+        const ctx = canvas.getContext('2d');
+        const simContainer = document.getElementById('simulationContainer');
+
+        // --- Controls ---
+        const newBodyMassInput = document.getElementById('newBodyMass');
+        const massValueSpan = document.getElementById('massValue');
+        const gravitationalConstantInput = document.getElementById('gravitationalConstant');
+        const gValueSpan = document.getElementById('gValue');
+        const timeStepInput = document.getElementById('timeStep');
+        const timeStepValueSpan = document.getElementById('timeStepValue');
+        const addBodyModeBtn = document.getElementById('addBodyModeBtn');
+        const toggleTrailsBtn = document.getElementById('toggleTrailsBtn');
+        const resetBtn = document.getElementById('resetBtn');
+        const pausePlayBtn = document.getElementById('pausePlayBtn');
+        const statusDiv = document.getElementById('status');
+        const initialVelocityLineDiv = document.getElementById('initialVelocityLine');
+
+        let bodies = [];
+        let G = parseFloat(gravitationalConstantInput.value); // Gravitational constant
+        let timeStepFactor = parseFloat(timeStepInput.value);
+        let showTrails = true;
+        let isPaused = false;
+        let isAddingBodyMode = true; // Default to adding bodies
+        let isDragging = false;
+        let dragStartX, dragStartY;
+        let newBodyPreview = null;
+
+        const TRAIL_LENGTH = 100;
+        const MIN_DISTANCE_SQ = 25; // Softening factor for gravity calculation (prevents division by zero/infinite forces)
+        const VELOCITY_DRAG_SCALE = 0.05; // How much mouse drag translates to velocity
+
+        class CelestialBody {
+            constructor(x, y, mass, vx = 0, vy = 0, color = null) {
+                this.x = x;
+                this.y = y;
+                this.mass = mass;
+                this.vx = vx;
+                this.vy = vy;
+                this.radius = Math.max(2, Math.pow(mass, 1/3) * 0.3 + 1); // Radius somewhat proportional to mass volume
+                this.color = color || `hsl(${Math.random() * 360}, 80%, 70%)`;
+                this.trail = [];
+                this.fx = 0; // Force accumulator
+                this.fy = 0;
+            }
+
+            applyForce(fx, fy) {
+                this.fx += fx;
+                this.fy += fy;
+            }
+
+            update(dt) {
+                if (this.mass <= 0) return; // Skip if merged or zero mass
+
+                // Verlet integration might be more stable for orbits, but Euler is simpler for now
+                const ax = this.fx / this.mass;
+                const ay = this.fy / this.mass;
+
+                this.vx += ax * dt;
+                this.vy += ay * dt;
+
+                this.x += this.vx * dt;
+                this.y += this.vy * dt;
+
+                // Reset forces for next frame
+                this.fx = 0;
+                this.fy = 0;
+
+                if (showTrails) {
+                    this.trail.push({ x: this.x, y: this.y });
+                    if (this.trail.length > TRAIL_LENGTH) {
+                        this.trail.shift();
+                    }
+                } else {
+                    this.trail = [];
+                }
+            }
+
+            draw(context) {
+                if (this.mass <= 0) return;
+
+                // Draw trail
+                if (showTrails && this.trail.length > 1) {
+                    context.beginPath();
+                    context.moveTo(this.trail[0].x, this.trail[0].y);
+                    for (let i = 1; i < this.trail.length; i++) {
+                        context.lineTo(this.trail[i].x, this.trail[i].y);
+                    }
+                    context.strokeStyle = this.colorAlpha(0.4);
+                    context.lineWidth = Math.max(1, this.radius * 0.2);
+                    context.stroke();
+                }
+
+                // Draw body
+                context.beginPath();
+                context.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                context.fillStyle = this.color;
+                context.fill();
+
+                // Glow effect (optional, can impact performance)
+                context.shadowBlur = this.radius * 1.5;
+                context.shadowColor = this.colorAlpha(0.7);
+                context.fill(); // Fill again for glow
+                context.shadowBlur = 0; // Reset shadow
+            }
+
+            colorAlpha(alpha) {
+                const r = parseInt(this.color.slice(1,3), 16);
+                const g = parseInt(this.color.slice(3,5), 16);
+                const b = parseInt(this.color.slice(5,7), 16);
+                if (this.color.startsWith('hsl')) { // Basic HSL to RGBA approx
+                    // This is a placeholder. Proper HSL to RGBA is more complex.
+                    // For simplicity, we'll assume the color is already somewhat bright.
+                    return `hsla(${this.color.match(/\d+/g)[0]}, ${this.color.match(/\d+/g)[1]}%, ${this.color.match(/\d+/g)[2]}%, ${alpha})`;
+                }
+                return `rgba(${r},${g},${b},${alpha})`;
+            }
+        }
+
+        function resizeCanvas() {
+            const controlsWidth = document.getElementById('controls').offsetWidth + 30; // approx
+            canvas.width = Math.max(300, window.innerWidth - controlsWidth - 40); // Keep some space
+            canvas.height = Math.max(300, window.innerHeight - 40); // Top/bottom margin
+            simContainer.style.width = canvas.width + 'px';
+            simContainer.style.height = canvas.height + 'px';
+        }
+
+        function calculateGravitationalForces() {
+            for (let i = 0; i < bodies.length; i++) {
+                const bodyA = bodies[i];
+                if (bodyA.mass <= 0) continue;
+
+                for (let j = i + 1; j < bodies.length; j++) {
+                    const bodyB = bodies[j];
+                    if (bodyB.mass <= 0) continue;
+
+                    const dx = bodyB.x - bodyA.x;
+                    const dy = bodyB.y - bodyA.y;
+                    let distSq = dx * dx + dy * dy;
+
+                    // Softening: prevent extreme forces at very close distances
+                    if (distSq < MIN_DISTANCE_SQ) {
+                        distSq = MIN_DISTANCE_SQ;
+                    }
+                    const dist = Math.sqrt(distSq);
+
+                    const forceMagnitude = (G * bodyA.mass * bodyB.mass) / distSq;
+
+                    const forceX = (forceMagnitude * dx) / dist;
+                    const forceY = (forceMagnitude * dy) / dist;
+
+                    bodyA.applyForce(forceX, forceY);
+                    bodyB.applyForce(-forceX, -forceY); // Newton's third law
+                }
+            }
+        }
+
+        function handleCollisions() {
+            for (let i = 0; i < bodies.length; i++) {
+                const bodyA = bodies[i];
+                if (bodyA.mass <= 0) continue;
+
+                for (let j = i + 1; j < bodies.length; j++) {
+                    const bodyB = bodies[j];
+                    if (bodyB.mass <= 0) continue;
+
+                    const dx = bodyB.x - bodyA.x;
+                    const dy = bodyB.y - bodyA.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+
+                    if (dist < bodyA.radius + bodyB.radius) {
+                        // Collision detected: merge smaller into larger
+                        const [absorber, absorbed] = bodyA.mass >= bodyB.mass ? [bodyA, bodyB] : [bodyB, bodyA];
+
+                        // Conservation of momentum
+                        const totalMass = absorber.mass + absorbed.mass;
+                        absorber.vx = (absorber.mass * absorber.vx + absorbed.mass * absorbed.vx) / totalMass;
+                        absorber.vy = (absorber.mass * absorber.vy + absorbed.mass * absorbed.vy) / totalMass;
+                        
+                        // Weighted average for position (center of mass)
+                        absorber.x = (absorber.mass * absorber.x + absorbed.mass * absorbed.x) / totalMass;
+                        absorber.y = (absorber.mass * absorber.y + absorbed.mass * absorbed.y) / totalMass;
+
+                        absorber.mass = totalMass;
+                        absorber.radius = Math.max(2, Math.pow(absorber.mass, 1/3) * 0.3 + 1);
+                        // Absorber might inherit some color characteristic or get a new one
+                        // For simplicity, absorber keeps its color.
+
+                        absorbed.mass = 0; // Mark as absorbed
+                        absorbed.radius = 0;
+                        absorbed.trail = [];
+                    }
+                }
+            }
+            // Remove absorbed bodies
+            bodies = bodies.filter(body => body.mass > 0);
+        }
+
+
+        function simulationLoop(timestamp) {
+            if (!isPaused) {
+                const dt = timeStepFactor; // Effective time step per frame
+
+                calculateGravitationalForces();
+                handleCollisions();
+
+                bodies.forEach(body => body.update(dt));
+            }
+
+            // Drawing
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            bodies.forEach(body => body.draw(ctx));
+
+            if (newBodyPreview) {
+                ctx.beginPath();
+                ctx.arc(newBodyPreview.x, newBodyPreview.y, newBodyPreview.radius, 0, Math.PI * 2);
+                ctx.fillStyle = newBodyPreview.colorAlpha(0.5);
+                ctx.fill();
+            }
+            
+            statusDiv.textContent = `Bodies: ${bodies.length}`;
+            requestAnimationFrame(simulationLoop);
+        }
+
+        // --- Event Listeners ---
+        newBodyMassInput.addEventListener('input', (e) => {
+            massValueSpan.textContent = e.target.value;
+        });
+        gravitationalConstantInput.addEventListener('input', (e) => {
+            G = parseFloat(e.target.value);
+            gValueSpan.textContent = e.target.value;
+        });
+        timeStepInput.addEventListener('input', (e) => {
+            timeStepFactor = parseFloat(e.target.value);
+            timeStepValueSpan.textContent = e.target.value;
+        });
+
+        toggleTrailsBtn.addEventListener('click', () => {
+            showTrails = !showTrails;
+            toggleTrailsBtn.textContent = `Toggle Trails (${showTrails ? 'On' : 'Off'})`;
+            if (!showTrails) {
+                bodies.forEach(b => b.trail = []);
+            }
+        });
+
+        resetBtn.addEventListener('click', () => {
+            bodies = [];
+            isPaused = false;
+            pausePlayBtn.textContent = "Pause";
+            // Optional: Reset G and timeStep to defaults if desired
+            // G = 1; gravitationalConstantInput.value = 1; gValueSpan.textContent = '1';
+            // timeStepFactor = 1; timeStepInput.value = 1; timeStepValueSpan.textContent = '1';
+        });
+
+        pausePlayBtn.addEventListener('click', () => {
+            isPaused = !isPaused;
+            pausePlayBtn.textContent = isPaused ? "Play" : "Pause";
+        });
+        
+        addBodyModeBtn.addEventListener('click', () => {
+            // This button might be used to toggle between adding bodies and, say, a "pan/zoom" mode in a more complex sim.
+            // For now, it's mainly an indicator.
+            isAddingBodyMode = true; // Could be toggled if other modes existed
+            addBodyModeBtn.style.backgroundColor = '#385888'; // Indicate active
+        });
+
+
+        // Mouse controls for adding bodies
+        canvas.addEventListener('mousedown', (e) => {
+            if (!isAddingBodyMode || e.button !== 0) return; // Only left click in add mode
+            const rect = canvas.getBoundingClientRect();
+            dragStartX = e.clientX - rect.left;
+            dragStartY = e.clientY - rect.top;
+            isDragging = true;
+
+            const mass = parseFloat(newBodyMassInput.value);
+            const radius = Math.max(2, Math.pow(mass, 1/3) * 0.3 + 1);
+            newBodyPreview = { x: dragStartX, y: dragStartY, radius: radius, color: `hsl(${Math.random() * 360}, 80%, 70%)`, colorAlpha: CelestialBody.prototype.colorAlpha };
+
+            initialVelocityLineDiv.style.left = dragStartX + simContainer.offsetLeft + 'px';
+            initialVelocityLineDiv.style.top = dragStartY + simContainer.offsetTop + 'px';
+            initialVelocityLineDiv.style.width = '0px';
+            initialVelocityLineDiv.style.height = '2px'; // Thickness of the line
+            initialVelocityLineDiv.style.transformOrigin = '0 0';
+            initialVelocityLineDiv.style.display = 'block';
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            if (!isAddingBodyMode || !isDragging) return;
+            const rect = canvas.getBoundingClientRect();
+            const currentX = e.clientX - rect.left;
+            const currentY = e.clientY - rect.top;
+
+            const dx = currentX - dragStartX;
+            const dy = currentY - dragStartY;
+            const angle = Math.atan2(dy, dx);
+            const length = Math.sqrt(dx * dx + dy * dy);
+
+            initialVelocityLineDiv.style.width = length + 'px';
+            initialVelocityLineDiv.style.transform = `rotate(${angle}rad)`;
+        });
+
+        canvas.addEventListener('mouseup', (e) => {
+            if (!isAddingBodyMode || !isDragging || e.button !== 0) return;
+            const rect = canvas.getBoundingClientRect();
+            const endX = e.clientX - rect.left;
+            const endY = e.clientY - rect.top;
+
+            const vx = (endX - dragStartX) * VELOCITY_DRAG_SCALE;
+            const vy = (endY - dragStartY) * VELOCITY_DRAG_SCALE;
+            const mass = parseFloat(newBodyMassInput.value);
+
+            bodies.push(new CelestialBody(dragStartX, dragStartY, mass, vx, vy, newBodyPreview.color));
+            
+            isDragging = false;
+            newBodyPreview = null;
+            initialVelocityLineDiv.style.display = 'none';
+        });
+        
+        canvas.addEventListener('mouseleave', () => { // Cancel drag if mouse leaves canvas
+            if (isDragging) {
+                isDragging = false;
+                newBodyPreview = null;
+                initialVelocityLineDiv.style.display = 'none';
+            }
+        });
+
+
+        // Initial setup
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas(); // Call once to set initial size
+
+        // Add some initial bodies for demo
+        bodies.push(new CelestialBody(canvas.width / 2, canvas.height / 2, 20000, 0, 0, '#FFFF80')); // A "sun"
+        bodies.push(new CelestialBody(canvas.width / 2 + 200, canvas.height / 2, 300, 0, 2.5)); // Planet 1
+        bodies.push(new CelestialBody(canvas.width / 2 - 100, canvas.height / 2, 100, 0, -1.8)); // Planet 2
+        bodies.push(new CelestialBody(canvas.width / 2, canvas.height / 2 - 150, 50, 1.5, 0)); // Planet 3
+
+
+        // Start the simulation
+        requestAnimationFrame(simulationLoop);
+    </script>
+</body>
+</html>

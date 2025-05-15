@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>PondLife Sim - A Tiny Ecosystem</title>
+<style>
+    body {
+        margin: 0;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        background-color: #f0f0f0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        color: #333;
+    }
+    #controls {
+        background: #fff;
+        padding: 15px 20px;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        margin-bottom: 20px;
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        justify-content: center;
+    }
+    #controls button {
+        padding: 8px 15px;
+        border: none;
+        border-radius: 5px;
+        cursor: pointer;
+        font-size: 14px;
+        background-color: #007bff;
+        color: white;
+        transition: background-color 0.2s;
+    }
+    #controls button:hover {
+        background-color: #0056b3;
+    }
+    #controls button.danger {
+        background-color: #dc3545;
+    }
+    #controls button.danger:hover {
+        background-color: #c82333;
+    }
+    #stats {
+        font-size: 14px;
+        margin-bottom: 10px;
+        background: #e9ecef;
+        padding: 10px;
+        border-radius: 5px;
+        width: 580px; /* Match canvas width */
+        text-align: center;
+    }
+    canvas {
+        display: block;
+        border: 1px solid #ccc;
+        background-color: #a2d5f2; /* Light blue for water */
+        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+    #loadingMessage {
+        font-size: 1.2em;
+        color: #555;
+    }
+</style>
+</head>
+<body>
+
+<div id="loadingMessage">Loading Simulation...</div>
+
+<div id="controls" style="display:none;">
+    <button id="addNutrientsBtn">+ Nutrients (Boost Algae)</button>
+    <button id="polluteBtn" class="danger">! Pollute (Harm Algae)</button>
+    <button id="addHerbivoreBtn">+ Herbivore</button>
+    <button id="addCarnivoreBtn">+ Carnivore</button>
+    <button id="resetBtn">Reset Simulation</button>
+</div>
+<div id="stats" style="display:none;">
+    Algae Patches: <span id="algaeCount">0</span> |
+    Herbivores: <span id="herbivoreCount">0</span> (Avg Energy: <span id="herbivoreEnergy">0</span>) |
+    Carnivores: <span id="carnivoreCount">0</span> (Avg Energy: <span id="carnivoreEnergy">0</span>)
+</div>
+<canvas id="pondCanvas"></canvas>
+
+<script>
+    // --- Configuration ---
+    const CANVAS_WIDTH = 600;
+    const CANVAS_HEIGHT = 400;
+
+    const ALGAE_GROWTH_RATE = 0.002; // Chance per frame to spawn new algae if space
+    const MAX_ALGAE_PATCHES = 150;
+    const ALGAE_SIZE = 8;
+    const ALGAE_ENERGY_VALUE = 20; // Energy herbivores get from eating one
+
+    const HERBIVORE_SIZE = 6;
+    const HERBIVORE_SPEED = 0.6;
+    const HERBIVORE_MAX_ENERGY = 100;
+    const HERBIVORE_ENERGY_DECAY = 0.08; // Energy lost per frame
+    const HERBIVORE_REPRODUCTION_ENERGY = 70; // Needs this much energy to reproduce
+    const HERBIVORE_REPRODUCTION_COST = 40; // Energy lost when reproducing
+    const HERBIVORE_SENSE_RADIUS = 80;
+
+    const CARNIVORE_SIZE = 10;
+    const CARNIVORE_SPEED = 0.4;
+    const CARNIVORE_MAX_ENERGY = 200;
+    const CARNIVORE_ENERGY_DECAY = 0.1;
+    const CARNIVORE_REPRODUCTION_ENERGY = 150;
+    const CARNIVORE_REPRODUCTION_COST = 80;
+    const CARNIVORE_SENSE_RADIUS = 120;
+    const CARNIVORE_ENERGY_FROM_HERBIVORE = 60;
+
+    let pollutionEffect = 0; // Reduces algae growth temporarily
+    let nutrientBoost = 0; // Increases algae growth temporarily
+
+    // --- Setup ---
+    const canvas = document.getElementById('pondCanvas');
+    const ctx = canvas.getContext('2d');
+    canvas.width = CANVAS_WIDTH;
+    canvas.height = CANVAS_HEIGHT;
+
+    let algae = [];
+    let herbivores = [];
+    let carnivores = [];
+
+    let animationFrameId;
+
+    // --- Utility Functions ---
+    function random(min, max) {
+        return Math.random() * (max - min) + min;
+    }
+
+    function distance(entity1, entity2) {
+        const dx = entity1.x - entity2.x;
+        const dy = entity1.y - entity2.y;
+        return Math.sqrt(dx * dx + dy * dy);
+    }
+
+    // --- Entity Classes ---
+    class Algae {
+        constructor(x, y) {
+            this.x = x || random(ALGAE_SIZE, CANVAS_WIDTH - ALGAE_SIZE);
+            this.y = y || random(ALGAE_SIZE, CANVAS_HEIGHT - ALGAE_SIZE);
+            this.size = ALGAE_SIZE;
+            this.color = `rgba(0, ${Math.floor(random(100,180))}, 0, 0.7)`; // Shades of green
+        }
+
+        draw() {
+            ctx.fillStyle = this.color;
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.size / 2, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+
+    class Herbivore {
+        constructor(x, y, energy = HERBIVORE_MAX_ENERGY / 2) {
+            this.x = x || random(HERBIVORE_SIZE, CANVAS_WIDTH - HERBIVORE_SIZE);
+            this.y = y || random(HERBIVORE_SIZE, CANVAS_HEIGHT - HERBIVORE_SIZE);
+            this.size = HERBIVORE_SIZE;
+            this.energy = energy;
+            this.speed = HERBIVORE_SPEED;
+            this.targetAlgae = null;
+            this.dx = random(-1, 1); // Random initial direction
+            this.dy = random(-1, 1);
+            const mag = Math.sqrt(this.dx*this.dx + this.dy*this.dy) || 1;
+            this.dx /= mag;
+            this.dy /= mag;
+        }
+
+        draw() {
+            const energyRatio = Math.max(0, this.energy / HERBIVORE_MAX_ENERGY);
+            ctx.fillStyle = `rgba(0, 0, ${Math.floor(150 + 105 * energyRatio)}, ${0.5 + 0.5 * energyRatio})`; // Blue, brighter with more energy
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        update() {
+            this.energy -= HERBIVORE_ENERGY_DECAY;
+            if (this.energy <= 0) return; // Will be removed
+
+            // Find food
+            if (!this.targetAlgae || algae.indexOf(this.targetAlgae) === -1) {
+                this.findTargetAlgae();
+            }
+
+            if (this.targetAlgae) {
+                const angle = Math.atan2(this.targetAlgae.y - this.y, this.targetAlgae.x - this.x);
+                this.dx = Math.cos(angle);
+                this.dy = Math.sin(angle);
+                if (distance(this, this.targetAlgae) < this.size + this.targetAlgae.size / 2) {
+                    this.eatAlgae(this.targetAlgae);
+                    this.targetAlgae = null;
+                }
+            } else { // Wander if no target
+                if (Math.random() < 0.05) { // Change direction occasionally
+                    const angle = random(0, Math.PI * 2);
+                    this.dx = Math.cos(angle);
+                    this.dy = Math.sin(angle);
+                }
+            }
+
+            this.x += this.dx * this.speed;
+            this.y += this.dy * this.speed;
+
+            // Keep within bounds
+            this.x = Math.max(this.size, Math.min(this.x, CANVAS_WIDTH - this.size));
+            this.y = Math.max(this.size, Math.min(this.y, CANVAS_HEIGHT - this.size));
+
+
+            if (this.energy >= HERBIVORE_REPRODUCTION_ENERGY && herbivores.length < 100) { // Cap population
+                this.reproduce();
+            }
+        }
+        
+        findTargetAlgae() {
+            let closestAlgae = null;
+            let minDistance = HERBIVORE_SENSE_RADIUS;
+            for (const alga of algae) {
+                const d = distance(this, alga);
+                if (d < minDistance) {
+                    minDistance = d;
+                    closestAlgae = alga;
+                }
+            }
+            this.targetAlgae = closestAlgae;
+        }
+
+        eatAlgae(alga) {
+            this.energy = Math.min(HERBIVORE_MAX_ENERGY, this.energy + ALGAE_ENERGY_VALUE);
+            algae.splice(algae.indexOf(alga), 1);
+        }
+
+        reproduce() {
+            this.energy -= HERBIVORE_REPRODUCTION_COST;
+            herbivores.push(new Herbivore(this.x + random(-10,10), this.y + random(-10,10), this.energy / 2));
+        }
+    }
+
+    class Carnivore {
+        constructor(x, y, energy = CARNIVORE_MAX_ENERGY / 2) {
+            this.x = x || random(CARNIVORE_SIZE, CANVAS_WIDTH - CARNIVORE_SIZE);
+            this.y = y || random(CARNIVORE_SIZE, CANVAS_HEIGHT - CARNIVORE_SIZE);
+            this.size = CARNIVORE_SIZE;
+            this.energy = energy;
+            this.speed = CARNIVORE_SPEED;
+            this.targetHerbivore = null;
+            this.dx = random(-1, 1);
+            this.dy = random(-1, 1);
+            const mag = Math.sqrt(this.dx*this.dx + this.dy*this.dy) || 1;
+            this.dx /= mag;
+            this.dy /= mag;
+        }
+
+        draw() {
+            const energyRatio = Math.max(0, this.energy / CARNIVORE_MAX_ENERGY);
+            ctx.fillStyle = `rgba(${Math.floor(150 + 105 * energyRatio)}, 0, 0, ${0.5 + 0.5 * energyRatio})`; // Red, brighter with energy
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        update() {
+            this.energy -= CARNIVORE_ENERGY_DECAY;
+            if (this.energy <= 0) return;
+
+            if (!this.targetHerbivore || herbivores.indexOf(this.targetHerbivore) === -1 || this.targetHerbivore.energy <= 0) {
+                this.findTargetHerbivore();
+            }
+
+            if (this.targetHerbivore) {
+                const angle = Math.atan2(this.targetHerbivore.y - this.y, this.targetHerbivore.x - this.x);
+                this.dx = Math.cos(angle);
+                this.dy = Math.sin(angle);
+                if (distance(this, this.targetHerbivore) < this.size + this.targetHerbivore.size) {
+                    this.eatHerbivore(this.targetHerbivore);
+                    this.targetHerbivore = null;
+                }
+            } else {
+                if (Math.random() < 0.05) {
+                    const angle = random(0, Math.PI * 2);
+                    this.dx = Math.cos(angle);
+                    this.dy = Math.sin(angle);
+                }
+            }
+
+            this.x += this.dx * this.speed;
+            this.y += this.dy * this.speed;
+            
+            this.x = Math.max(this.size, Math.min(this.x, CANVAS_WIDTH - this.size));
+            this.y = Math.max(this.size, Math.min(this.y, CANVAS_HEIGHT - this.size));
+
+            if (this.energy >= CARNIVORE_REPRODUCTION_ENERGY && carnivores.length < 30) { // Cap population
+                this.reproduce();
+            }
+        }
+
+        findTargetHerbivore() {
+            let closestHerbivore = null;
+            let minDistance = CARNIVORE_SENSE_RADIUS;
+            for (const herb of herbivores) {
+                if (herb.energy <= 0) continue; // Don't target dead ones
+                const d = distance(this, herb);
+                if (d < minDistance) {
+                    minDistance = d;
+                    closestHerbivore = herb;
+                }
+            }
+            this.targetHerbivore = closestHerbivore;
+        }
+
+        eatHerbivore(herb) {
+            this.energy = Math.min(CARNIVORE_MAX_ENERGY, this.energy + CARNIVORE_ENERGY_FROM_HERBIVORE);
+            herb.energy = 0; // Mark herbivore for removal
+        }
+
+        reproduce() {
+            this.energy -= CARNIVORE_REPRODUCTION_COST;
+            carnivores.push(new Carnivore(this.x + random(-15,15), this.y + random(-15,15), this.energy / 2));
+        }
+    }
+
+    // --- Game Logic ---
+    function spawnInitialOrganisms() {
+        algae = [];
+        herbivores = [];
+        carnivores = [];
+
+        for (let i = 0; i < 40; i++) algae.push(new Algae());
+        for (let i = 0; i < 10; i++) herbivores.push(new Herbivore());
+        for (let i = 0; i < 2; i++) carnivores.push(new Carnivore());
+    }
+
+    function updateStats() {
+        document.getElementById('algaeCount').textContent = algae.length;
+        document.getElementById('herbivoreCount').textContent = herbivores.length;
+        document.getElementById('carnivoreCount').textContent = carnivores.length;
+
+        let avgHerbEnergy = 0;
+        if (herbivores.length > 0) {
+            avgHerbEnergy = herbivores.reduce((sum, h) => sum + h.energy, 0) / herbivores.length;
+        }
+        document.getElementById('herbivoreEnergy').textContent = avgHerbEnergy.toFixed(1);
+
+        let avgCarnEnergy = 0;
+        if (carnivores.length > 0) {
+            avgCarnEnergy = carnivores.reduce((sum, c) => sum + c.energy, 0) / carnivores.length;
+        }
+        document.getElementById('carnivoreEnergy').textContent = avgCarnEnergy.toFixed(1);
+    }
+
+    function gameLoop() {
+        ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT); // Clear pond
+
+        // Grow Algae
+        let currentAlgaeGrowthRate = ALGAE_GROWTH_RATE + nutrientBoost - pollutionEffect;
+        if (algae.length < MAX_ALGAE_PATCHES && Math.random() < currentAlgaeGrowthRate) {
+            algae.push(new Algae());
+        }
+        // Reduce temporary effects
+        pollutionEffect = Math.max(0, pollutionEffect - 0.0001);
+        nutrientBoost = Math.max(0, nutrientBoost - 0.0001);
+
+
+        algae.forEach(a => a.draw());
+
+        herbivores.forEach(h => {
+            h.update();
+            h.draw();
+        });
+        carnivores.forEach(c => {
+            c.update();
+            c.draw();
+        });
+
+        // Remove dead organisms
+        herbivores = herbivores.filter(h => h.energy > 0);
+        carnivores = carnivores.filter(c => c.energy > 0);
+
+        updateStats();
+        animationFrameId = requestAnimationFrame(gameLoop);
+    }
+
+    // --- Event Listeners ---
+    document.getElementById('addNutrientsBtn').addEventListener('click', () => {
+        nutrientBoost = Math.min(0.05, nutrientBoost + 0.01); // Cap boost
+    });
+    document.getElementById('polluteBtn').addEventListener('click', () => {
+        pollutionEffect = Math.min(0.03, pollutionEffect + 0.005); // Cap pollution
+        // Temporarily reduce energy of existing organisms slightly
+        herbivores.forEach(h => h.energy *= 0.9);
+        carnivores.forEach(c => c.energy *= 0.9);
+    });
+    document.getElementById('addHerbivoreBtn').addEventListener('click', () => {
+        if (herbivores.length < 100) herbivores.push(new Herbivore());
+    });
+    document.getElementById('addCarnivoreBtn').addEventListener('click', () => {
+        if (carnivores.length < 30) carnivores.push(new Carnivore());
+    });
+    document.getElementById('resetBtn').addEventListener('click', () => {
+        cancelAnimationFrame(animationFrameId);
+        spawnInitialOrganisms();
+        pollutionEffect = 0;
+        nutrientBoost = 0;
+        gameLoop();
+    });
+
+    // --- Initialization ---
+    window.onload = () => {
+        document.getElementById('loadingMessage').style.display = 'none';
+        document.getElementById('controls').style.display = 'flex';
+        document.getElementById('stats').style.display = 'block';
+        spawnInitialOrganisms();
+        gameLoop();
+    };
+
+</script>
+
+</body>
+</html>
